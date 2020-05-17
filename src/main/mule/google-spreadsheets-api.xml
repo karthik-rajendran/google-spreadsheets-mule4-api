@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:os="http://www.mulesoft.org/schema/mule/os" xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+	xmlns:oauth="http://www.mulesoft.org/schema/mule/oauth"
+	xmlns:http="http://www.mulesoft.org/schema/mule/http" xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+http://www.mulesoft.org/schema/mule/oauth http://www.mulesoft.org/schema/mule/oauth/current/mule-oauth.xsd
+http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd">
+	<http:listener-config name="HTTP_Listener_config" doc:name="HTTP Listener config" doc:id="b24c4e0f-6531-4c20-8e38-140ced11e72e">
+		<http:listener-connection host="0.0.0.0" port="8081" />
+	</http:listener-config>
+	<http:request-config name="HTTP_Request_configuration" doc:name="HTTP Request configuration" doc:id="69a03220-fafb-44ed-878f-a2adf7c4c007" basePath="${api-base-path}">
+		<http:request-connection protocol="HTTPS" host="${api-host}" port="443">
+			<http:authentication >
+				<oauth:authorization-code-grant-type externalCallbackUrl="${external-call-back-url}" localAuthorizationUrl="${local-auth-url}" authorizationUrl="${google-auth-url}" clientId="${api-client-id}" clientSecret="${api-client-secret}" tokenUrl="${token-url}" scopes="${read-only-scope}" tokenManager="Token_manager_config" localCallbackConfig="HTTP_Listener_config" localCallbackConfigPath="/" refreshTokenWhen="#[attributes.statusCode == 401 or attributes.statusCode == 403]">
+				</oauth:authorization-code-grant-type>
+			</http:authentication>
+		</http:request-connection>
+	</http:request-config>
+	<oauth:token-manager-config name="Token_manager_config" doc:name="Token manager config" doc:id="bf28dde7-702b-422c-9330-6cadb4b76bef" objectStore="Object_store"/>
+	<os:config name="ObjectStore_Config" doc:name="ObjectStore Config" doc:id="0d6b2b31-9b77-41c5-8913-996032809f6b" >
+		<os:connection />
+	</os:config>
+	<os:object-store name="Object_store" doc:name="Object store" doc:id="bd4a443a-dc3f-40a7-9ff7-7119aa7e14a7" maxEntries="10" entryTtl="10" entryTtlUnit="MINUTES" expirationInterval="20" config-ref="ObjectStore_Config" />
+	<flow name="google-spreadsheets-read" doc:id="f9918efd-34d1-4386-867f-fc93e28a8caa" >
+		<http:listener doc:name="Listener" doc:id="166e8a69-b83a-4cbf-b884-3006704123cd" config-ref="HTTP_Listener_config" path="/values/{range}" allowedMethods="GET"/>
+		<set-variable value="${spread-sheet-id}" doc:name="get-spreadsheet-id" doc:id="012dcef2-8a53-4522-923d-050e9a61ad24" variableName="spreadsheetid"/>
+		<http:request method="GET" doc:name="sheets-api-get-request" doc:id="15dc3b74-157e-48b8-aff4-a531a63fa171" config-ref="HTTP_Request_configuration" path="{spreadsheetId}/values/{range}">
+			<http:uri-params ><![CDATA[#[output application/java
+---
+{
+	"range" : attributes.uriParams['range'],
+	"spreadsheetId" : vars.spreadsheetid
+}]]]></http:uri-params>
+		</http:request>
+		<ee:transform doc:name="get-sheet-values" doc:id="72a330d0-afae-40bc-bf3f-648118378c3d" >
+			<ee:message >
+				<ee:set-payload ><![CDATA[%dw 2.0
+output application/json
+---
+
+payload.values]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+		<logger level="INFO" doc:name="Logger" doc:id="500a13a0-e1a1-40d7-a7e1-4ebb1dcf6314" message='"payload" #[payload]' />
+	</flow>
+	<flow name="google-spreadsheets-write" doc:id="3dc1569e-9ea7-47ac-8721-9c50f3e17103" >
+		<http:listener doc:name="Listener" doc:id="723c5e80-94a4-4fa4-91c7-85c1e8b45537" config-ref="HTTP_Listener_config" path="/values/{range}" allowedMethods="POST"/>
+		<set-variable value="${spread-sheet-id}" doc:name="get-spreadsheet-id" doc:id="3b4adf1c-b7f5-4857-b0a4-279056f663af" variableName="spreadsheetid" />
+		<http:request method="POST" doc:name="google-sheets-api-request" doc:id="5a5d9833-74f3-48b9-8361-36406dfffbbe" config-ref="HTTP_Request_configuration" path="{spreadsheetId}/values/{range}:append?valueInputOption=USER_ENTERED" outputMimeType="application/json">
+			<http:uri-params ><![CDATA[#[output application/java
+---
+{
+	"range" : attributes.uriParams["range"],
+	"spreadsheetId" : vars.spreadsheetid
+}]]]></http:uri-params>
+		</http:request>
+		<logger level="INFO" doc:name="Logger" doc:id="02881884-7433-4526-9fcc-de08cf724a92" message='"updated values" #[payload]'/>
+	</flow>
+	<flow name="google-spreadsheets-add-new-sheet" doc:id="430552da-45a9-40ad-9c3f-ce78c8a1213f" >
+		<http:listener doc:name="Listener" doc:id="69b5a3ca-8680-4de4-a6dc-c50582683682" config-ref="HTTP_Listener_config" path="/sheets" allowedMethods="POST"/>
+		<set-variable doc:name="set-api-path" doc:id="becebf39-c8a8-4b5f-8b9f-f8b6b43e626b" variableName="apiPath" value="${spread-sheet-id}:batchUpdate"/>
+		<http:request method="POST" doc:name="google-sheets-api-request" doc:id="2c2807ad-97a5-4bb7-8a3c-db40fcc31406" config-ref="HTTP_Request_configuration" path='#[vars.apiPath]'>
+			<http:body ><![CDATA[#[%dw 2.0
+output application/json
+---
+{
+  "requests": [
+    {
+      "addSheet": {
+        "properties": {
+          "title": "Deposits",
+          "gridProperties": {
+            "rowCount": 100,
+            "columnCount": 3
+          },
+          "tabColor": {
+            "red": 1.0,
+            "green": 0.3,
+            "blue": 0.4
+          }
+        }
+      }
+    }
+  ]
+}]]]></http:body>
+		</http:request>
+	</flow>
+</mule>
